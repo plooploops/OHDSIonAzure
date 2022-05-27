@@ -192,6 +192,7 @@ install:
 ####################
 ## Helper Actions ##
 ####################
+
 check-azure-linux-vmss-pool:
   # Check if Azure Linux VMSS Agent Pool is ready
   - exec:

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ADO_ORGANIZATION_NAME=${ADO_ORGANIZATION_NAME:-https://dev.azure.com/my-ado-org/}
 ADO_PROJECT_NAME=${ADO_PROJECT_NAME:-OHDSIOnAzure}
 ADO_QUEUE_NAME=${ADO_PROJECT_NAME:-prefix-env-ado-build-vmss-agent-pool}
@@ -21,14 +20,13 @@ done
 
 export AZURE_DEVOPS_EXT_PAT="$ADO_PAT"
 az devops configure --defaults organization="$ADO_ORGANIZATION_NAME"
-
 READY=false
 CURRENT_COUNT=0
 
 while [ "$CURRENT_COUNT" -lt "$CHECK_RETRY_COUNT" ]; do
   echo "Checking Agent Pool $ADO_QUEUE_NAME"
 
-  queueJson=$(az pipelines queue list --organization "$ADO_ORGANIZATION_NAME" -p "$ADO_PROJECT_NAME" --query "[?name=='$ADO_QUEUE_NAME']")
+  queueJson=$(az pipelines queue list --organization "$ADO_ORGANIZATION_NAME" -p "$ADO_PROJECT_NAME" --query "[?name == '$ADO_QUEUE_NAME']")
   poolId=$(echo "$queueJson" | jq -r '.[].pool.id')
 
   # check that the Agent Pool has an online agent

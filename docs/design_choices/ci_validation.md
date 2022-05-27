@@ -45,7 +45,7 @@ The linters should cover the following:
 
 ## Portable Build and Deployment Environment
 
-OHDSI on Azure uses [Porter](https://porter.sh/docs/) to have a build environment wrapped in an OCI container to capture dependencies and setup steps in a [CNAB](https://github.com/cnabio/cnab-spec) (Cloud Native Application Bundle) bundle manifest.
+OHDSI on Azure uses [Porter](https://porter.sh/docs/) to have a build environment wrapped in an OCI container to capture dependencies and setup steps in a [CNAB (Cloud Native Application Bundle)](https://github.com/cnabio/cnab-spec) bundle manifest.
 
 Using a containerized environment will ensure that the deployment experience will be consistent provided you have met baseline dependencies setup locally (e.g. you can run Docker, you have an Azure subscription with administrative access, and you have an Azure DevOps PAT).  This approach also allows you to use the Porter OHDSI on Azure bundle from a deployment (CD) pipeline.
 

@@ -16,6 +16,7 @@ BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME=${BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_N
 BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_CONTAINER_NAME=${BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_CONTAINER_NAME:-prefix-environment-tfstate}
 BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_KEY=${BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_KEY:-prefix-environment-tfstate-sa-key}
 BOOTSTRAP_TF_BACKEND_FILENAME=${BOOTSTRAP_TF_BACKEND_FILENAME:-terraform.tfstate}
+PORTER_BOOTSTRAP_AZURE_KEY_VAULT=${PORTER_BOOTSTRAP_AZURE_KEY_VAULT:-prefix-environment-kv}
 
 ####################################
 ###### Setup Bootstrap Values ######
@@ -38,6 +39,9 @@ ENVIRONMENT=${ENVIRONMENT:-dev00}
 
 # Include debugging output, set to 1 to enable
 INCLUDE_DEBUGGING_OUTPUT=${INCLUDE_DEBUGGING_OUTPUT:-0}
+
+# Include Key Vault secrets, set to 1 to enable
+INCLUDE_KEY_VAULT_PORTER_SECRETS=${INCLUDE_KEY_VAULT_PORTER_SECRETS:-1}
 
 # Copy vocabulary from demo vocabulary Azure Storage Account container
 SOURCE_VOCABULARIES_STORAGE_ACCOUNT_NAME=${SOURCE_VOCABULARIES_STORAGE_ACCOUNT_NAME:-demovocabohdsionazure}
@@ -106,10 +110,18 @@ porter mixin install az
 porter mixin install exec
 porter mixin install terraform
 
+####################################
+###### Install Porter Plugins ######
+####################################
+
+porter plugin install azure
+
 ################################################
 ###### Setup Porter Environment Variables ######
 ###### For your Credentials and parameters #####
 ################################################
+
+export AZURE_DEVOPS_EXT_PAT="$ADO_PAT"
 
 # Porter Credentials
 export AZURE_TENANT_ID="$ARM_TENANT_ID"
@@ -157,6 +169,30 @@ export VOCABULARIES_STORAGE_ACCOUNT_NAME="$VOCABULARIES_STORAGE_ACCOUNT_NAME"
 export VOCABULARY_BUILD_PIPELINE_NAME="$VOCABULARY_BUILD_PIPELINE_NAME"
 export VOCABULARY_RELEASE_PIPELINE_NAME="$VOCABULARY_RELEASE_PIPELINE_NAME"
 
+########################################################
+###### Setup Porter Azure Key Vault Configuration ######
+###### For your Credentials ############################
+########################################################
+
+if [[ $INCLUDE_KEY_VAULT_PORTER_SECRETS == "1" ]];
+then
+
+cat << EOF > "$HOME/.porter/config.toml"
+     default-secrets = "$PREFIX-$ENVIRONMENT-secrets"
+     
+     [[secrets]]
+     name = "$PREFIX-$ENVIRONMENT-secrets"
+     plugin = "azure.keyvault"
+     
+     [secrets.config]
+     vault = "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT"
+EOF
+
+# Set permissions on porter config.toml 
+chmod 600 "$HOME/.porter/config.toml"
+
+fi
+
 ################################################
 ###### Setup Porter Environment Variables ######
 ###### For your Credentials and parameters #####
@@ -167,7 +203,10 @@ cat << EOF > "$PREFIX-$ENVIRONMENT-OHDSIOnAzure.env"
      # Add Porter to Path
      export PATH=\$PATH:~/.porter
 
-     # Porter Credentials
+     # Setup for Azure DevOps Extension for az cli
+     export AZURE_DEVOPS_EXT_PAT="$ADO_PAT"
+
+     # Porter Credentials - You can use environment variables for credentials
      export AZURE_TENANT_ID="$ARM_TENANT_ID"
      export AZURE_SUBSCRIPTION_ID="$ARM_SUBSCRIPTION_ID"
      export AZURE_CLIENT_ID="$ARM_CLIENT_ID"

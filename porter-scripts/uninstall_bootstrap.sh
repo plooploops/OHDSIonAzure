@@ -33,27 +33,26 @@ export ARM_TENANT_ID="$ARM_TENANT_ID"
 export ARM_SUBSCRIPTION_ID="$ARM_SUBSCRIPTION_ID"
 export ARM_ACCESS_KEY="$STORAGE_ACCOUNT_ACCESS_KEY"
 
-ls -l
-
 az login --service-principal -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" --tenant "$ARM_TENANT_ID"
 
 # Create storage container if it doesn't exist
 echo "Create Backend Azure Storage Container if it doesn't already exist"
 az storage container create --name "$CONTAINER_NAME" --account-name "$STORAGE_ACCOUNT_NAME"
 
-RESOURCE_GROUP_NAME="$PREFIX-$ENVIRONMENT-ado-bootstrap-omop-rg"
+# Remove ADO VMSS Agent Extension
+ADO_BOOTSTRAP_RESOURCE_GROUP_NAME="$PREFIX-$ENVIRONMENT-ado-bootstrap-omop-rg"
 VMSS_NAME="$PREFIX-$ENVIRONMENT-ado-build-windows-vmss-agent"
 
 echo "***** Remove Azure DevOps Pipeline Agent Extension *****"
 EXTENSION_NAME='Microsoft.Azure.DevOps.Pipelines.Agent'
-FOUND_EXTENSION_NAME=$(az vmss extension list -g "$RESOURCE_GROUP_NAME" --vmss-name "$VMSS_NAME" --query "[?name=='$EXTENSION_NAME']" | jq -r ".[].name")
+FOUND_EXTENSION_NAME=$(az vmss extension list -g "$ADO_BOOTSTRAP_RESOURCE_GROUP_NAME" --vmss-name "$VMSS_NAME" --query "[?name=='$EXTENSION_NAME']" | jq -r ".[].name")
 
 if [ -z "$FOUND_EXTENSION_NAME" ]
 then
      echo "Unable to find the extension $EXTENSION_NAME on VMSS $VMSS_NAME"
 else
      echo "Able to find the extension $EXTENSION_NAME on VMSS $VMSS_NAME"
-     az vmss extension delete --name "$EXTENSION_NAME" --resource-group "$RESOURCE_GROUP_NAME" --vmss-name "$VMSS_NAME"
+     az vmss extension delete --name "$EXTENSION_NAME" --resource-group "$ADO_BOOTSTRAP_RESOURCE_GROUP_NAME" --vmss-name "$VMSS_NAME"
 fi
 
 cd "$TF_WORKING_DIRECTORY"
@@ -87,3 +86,22 @@ cd -
 
 # Delete Backend Storage Container
 az storage container delete --name "$CONTAINER_NAME" --account-name "$STORAGE_ACCOUNT_NAME"
+
+# Delete Azure Key Vault
+PORTER_BOOTSTRAP_AZURE_KEY_VAULT="$PREFIX-$ENVIRONMENT-kv"
+
+# check if the key vault already exists
+AZURE_KEY_VAULT_RESULT=$(az keyvault list -g "$RESOURCE_GROUP_NAME")
+CURRENT_AZURE_KEY_VAULT=$(echo "$AZURE_KEY_VAULT_RESULT" | jq -r ".[] | select(.name==\"$PORTER_BOOTSTRAP_AZURE_KEY_VAULT\")")
+
+if [ -z "$CURRENT_AZURE_KEY_VAULT" ]
+then
+     echo "Azure Key vault $PORTER_BOOTSTRAP_AZURE_KEY_VAULT not found, skipping Key Vault Clean up"
+else
+     echo "Azure Key vault $PORTER_BOOTSTRAP_AZURE_KEY_VAULT exists, cleaning up Key Vault"
+     az keyvault delete \
+          -n "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+          -g "$RESOURCE_GROUP_NAME"
+     
+     az keyvault purge --subscription "$ARM_SUBSCRIPTION_ID" -n "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT"
+fi

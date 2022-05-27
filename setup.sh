@@ -26,12 +26,28 @@ PREFIX=${PREFIX:-ohdsi}
 ENVIRONMENT=${ENVIRONMENT:-dev00}
 ADO_ORGANIZATION_NAME=${ADO_ORGANIZATION_NAME:-my-ado-org-name}
 
+#############################################
+## Optional - Pass in Azure SP Credentials ##
+#############################################
+
+AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-my azure client id}
+AZURE_CLIENT_OBJECT_ID=${AZURE_CLIENT_OBJECT_ID:-my azure client object id}
+AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-my azure client secret}
+AZURE_TENANT_ID=${AZURE_TENANT_ID:-my azure tenant id}
+AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:-my azure subscription id}
+
 ############################
 ###### Default Values ######
 ############################
 
 # Include debugging output, set to 1 to enable
 INCLUDE_DEBUGGING_OUTPUT=${INCLUDE_DEBUGGING_OUTPUT:-0}
+
+# Include Key Vault Porter Secrets, set to 1 to enable
+INCLUDE_KEY_VAULT_PORTER_SECRETS=${INCLUDE_KEY_VAULT_PORTER_SECRETS:-1}
+
+# Create new Azure Service Principal
+CREATE_NEW_AZURE_SERVICE_PRINCIPAL=${CREATE_NEW_AZURE_SERVICE_PRINCIPAL:-1}
 
 # Copy vocabulary from demo vocabulary Azure Storage Account container
 SOURCE_VOCABULARIES_STORAGE_ACCOUNT_NAME=${SOURCE_VOCABULARIES_STORAGE_ACCOUNT_NAME:-demovocabohdsionazure}
@@ -77,9 +93,20 @@ done
 az group create --name "$BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME" --location "$BOOTSTRAP_TF_BACKEND_LOCATION"
 
 # Create storage account
-az storage account create --resource-group "$BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME" --name "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_NAME" --sku Standard_LRS --encryption-services blob
+STORAGE_ACCOUNT_RESULT=$(az storage account list -g "$BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME")
+STORAGE_ACCOUNT_EXISTS=$(echo "$STORAGE_ACCOUNT_RESULT" | jq -r ".[] | select(.name==\"$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_NAME\")")
 
+if [ -n "$STORAGE_ACCOUNT_EXISTS" ]
+then
+    echo "Bootstrap Backend Storage Account already exists"
+else
+    echo "Bootstrap Backend Storage Account doesn't exist"
+    az storage account create --resource-group "$BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME" --name "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_NAME" --sku Standard_LRS --encryption-services blob    
+fi
+
+echo "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_NAME"
 # Create blob container
+echo az storage container create --name "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_CONTAINER_NAME" --account-name "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_NAME"
 az storage container create --name "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_CONTAINER_NAME" --account-name "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_NAME"
 
 ACCOUNT_KEY=$(az storage account keys list --resource-group "$BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME" --account-name "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_NAME" --query '[0].value' -o tsv)
@@ -88,15 +115,28 @@ ACCOUNT_KEY=$(az storage account keys list --resource-group "$BOOTSTRAP_TF_BACKE
 ###### Setup Azure Service Principal ######
 ###########################################
 
-SUBSCRIPTION_ID=$(az account show --query "id" -o tsv)
-spJson=$(az ad sp create-for-rbac -n "$AZURE_SERVICE_PRINCIPAL_NAME" --role "Owner" --scopes "/subscriptions/$SUBSCRIPTION_ID")
+if [[ $CREATE_NEW_AZURE_SERVICE_PRINCIPAL == "1" ]];
+then
+    echo 'Creating new Azure SP'
 
-# echo "$spJson"
-# Get Service Principal Information
-spAppId=$(echo "$spJson" | jq -r ".appId")
-spPassword=$(echo "$spJson" | jq -r ".password")
-spTenantId=$(echo "$spJson" | jq -r ".tenant")
-spObjectId=$(az ad sp show --id "$spAppId" --query "objectId" -o tsv)
+    SUBSCRIPTION_ID=$(az account show --query "id" -o tsv)
+    spJson=$(az ad sp create-for-rbac -n "$AZURE_SERVICE_PRINCIPAL_NAME" --role "Owner" --scopes "/subscriptions/$SUBSCRIPTION_ID")
+
+    # echo "$spJson"
+    # Get Service Principal Information
+    spAppId=$(echo "$spJson" | jq -r ".appId")
+    spPassword=$(echo "$spJson" | jq -r ".password")
+    spTenantId=$(echo "$spJson" | jq -r ".tenant")
+    spObjectId=$(az ad sp show --id "$spAppId" --query "objectId" -o tsv)
+else
+    echo 'Using existing Azure SP'
+
+    spAppId=${AZURE_CLIENT_ID}
+    spObjectId=${AZURE_CLIENT_OBJECT_ID}
+    spPassword=${AZURE_CLIENT_SECRET}
+    spTenantId=${AZURE_TENANT_ID}
+    SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+fi
 
 # Setup current Azure Service principal with scope as the administrator user
 # RoleAssignmentSchedule.ReadWrite.Directory,RoleAssignmentSchedule.ReadWrite.All,RoleManagement.ReadWrite.Directory
@@ -111,8 +151,6 @@ PRIVILEGED_ROLE_ADMINISTRATOR_ROLE_ID='e8611ab8-c189-46e8-94e1-60213ab1f814'
 
 # Assign a role
 # https://docs.microsoft.com/en-us/azure/active-directory/roles/manage-roles-portal#microsoft-graph-pim-api
-
-
 CHECK_ROLE_ASSIGNMENTS_URL="https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments?"
 # shellcheck disable=SC2016
 CHECK_ROLE_ASSIGNMENTS_URL+='$filter = principalId eq'
@@ -199,6 +237,111 @@ else
     }"
 fi
 
+###################################
+###### Setup Azure Key Vault ######
+###################################
+
+if [[ $INCLUDE_KEY_VAULT_PORTER_SECRETS == "1" ]];
+then
+    PORTER_BOOTSTRAP_AZURE_KEY_VAULT="$PREFIX-$ENVIRONMENT-kv"
+
+    # check if the key vault already exists
+    AZURE_KEY_VAULT_RESULT=$(az keyvault list -g "$BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME")
+    CURRENT_AZURE_KEY_VAULT=$(echo "$AZURE_KEY_VAULT_RESULT" | jq -r ".[] | select(.name==\"$PORTER_BOOTSTRAP_AZURE_KEY_VAULT\")")
+
+    if [ -z "$CURRENT_AZURE_KEY_VAULT" ]
+    then
+        echo "Azure Key vault $PORTER_BOOTSTRAP_AZURE_KEY_VAULT not found.  Creating Azure Key vault $PORTER_BOOTSTRAP_AZURE_KEY_VAULT"
+        az keyvault create \
+            -l "$BOOTSTRAP_TF_BACKEND_LOCATION" \
+            -n "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+            -g "$BOOTSTRAP_TF_BACKEND_RESOURCE_GROUP_NAME"
+    else
+        echo "Azure Key vault $PORTER_BOOTSTRAP_AZURE_KEY_VAULT already exists"
+    fi
+
+    # Setup Azure Key Vault Access
+    az keyvault set-policy \
+        -n "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        --secret-permissions get list \
+        --object-id "$spObjectId"
+
+    # Setup Secrets for Credentials
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "azure-client-id" \
+        --value "$spAppId" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "azure-client-object-id" \
+        --value "$spObjectId" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "azure-client-secret" \
+        --value "$spPassword" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "azure-subscription-id" \
+        --value "$SUBSCRIPTION_ID" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "azure-tenant-id" \
+        --value "$spTenantId" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "admin-password" \
+        --value "$ADMIN_PASSWORD" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "admin-password-jumpbox" \
+        --value "$ADMIN_PASSWORD_JUMPBOX" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "admin-user" \
+        --value "$ADMIN_USER" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "admin-user-jumpbox" \
+        --value "$ADMIN_USER_JUMPBOX" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "ado-pat" \
+        --value "$ADO_PAT" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "azure-storage-account-key" \
+        --value "$ACCOUNT_KEY" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+
+    az keyvault secret set \
+        --vault-name "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
+        -n "omop-password" \
+        --value "$OMOP_PASSWORD" \
+        --query '{attributes:attributes, contentType:contentType, id:id, kid:kid, managed:managed, name:name, tags:tags}'
+else
+    PORTER_BOOTSTRAP_AZURE_KEY_VAULT=""
+fi
+
 #################################################
 ###### Setup Porter with bootstrap settings #####
 #################################################
@@ -215,6 +358,7 @@ bash "${PWD}/setup-porter.sh" "$@" \
     --BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_CONTAINER_NAME "$BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_CONTAINER_NAME" \
     --BOOTSTRAP_TF_BACKEND_STORAGE_ACCOUNT_KEY "$ACCOUNT_KEY" \
     --BOOTSTRAP_TF_BACKEND_FILENAME "$BOOTSTRAP_TF_BACKEND_FILENAME" \
+    --PORTER_BOOTSTRAP_AZURE_KEY_VAULT "$PORTER_BOOTSTRAP_AZURE_KEY_VAULT" \
     --ADO_ORGANIZATION_NAME "$ADO_ORGANIZATION_NAME" \
     --ADO_PAT "$ADO_PAT" \
     --OMOP_PASSWORD "$OMOP_PASSWORD" \
@@ -231,6 +375,8 @@ bash "${PWD}/setup-porter.sh" "$@" \
     --VOCABULARIES_SEARCH_PATTERN "$VOCABULARIES_SEARCH_PATTERN" \
     --CHECK_RETRY_COUNT "$CHECK_RETRY_COUNT" \
     --CHECK_SECONDS "$CHECK_SECONDS" \
+    --INCLUDE_DEBUGGING_OUTPUT "$INCLUDE_DEBUGGING_OUTPUT" \
+    --INCLUDE_KEY_VAULT_PORTER_SECRETS "$INCLUDE_KEY_VAULT_PORTER_SECRETS" \
     --BROADSEA_BUILD_PIPELINE_NAME "$BROADSEA_BUILD_PIPELINE_NAME" \
     --BROADSEA_RELEASE_PIPELINE_NAME "$BROADSEA_RELEASE_PIPELINE_NAME" \
     --ENVIRONMENT_DESTROY_PIPELINE_NAME "$ENVIRONMENT_DESTROY_PIPELINE_NAME" \

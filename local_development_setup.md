@@ -70,9 +70,9 @@ git clone https://github.com/microsoft/OHDSIonAzure
 
 You can install [porter](https://porter.sh/install/) per the docs.
 
-For convenience, call the setup script to install porter and configure it for your OHDSI on Azure environment.
+For convenience, call the [setup](./setup.sh) script to install porter and configure it for your OHDSI on Azure environment.
 
-> This setup script assumes you have `docker`, `az` (Azure CLI), and administrative access to your Azure subscription and to your Azure DevOps organization.  Your Azure Service Principal should be unique per environment.
+> This setup script assumes you have `docker`, `az` (Azure CLI), and administrative access to your Azure subscription and to your Azure DevOps organization.  Your Azure Service Principal should be unique per environment.  You should also ensure you have permissions to execute the script which you can set through `chmod +x setup.sh`.
 
 ```shell
 ./setup.sh \
@@ -107,9 +107,17 @@ The setup script will include installing [mixins](https://release-v1.porter.sh/m
 porter mixin install az
 ```
 
+### Install Plugins
+
+The setup script will include installing the [azure plugin](https://porter.sh/plugins/azure/) for your OHDSI on Azure environment, which is covered with the following command:
+
+```shell
+porter plugin install azure
+```
+
 ### Build your bundle
 
-OHDSI on Azure uses [Porter](https://porter.sh/docs/) to have a build environment wrapped in an OCI container to capture dependencies and setup steps in a [CNAB](https://github.com/cnabio/cnab-spec) (Cloud Native Application Bundle) bundle manifest.  Using a bundle will provide a consistent build and deployment experience for OHDSI on Azure.
+OHDSI on Azure uses [Porter](https://porter.sh/docs/) to have a build environment wrapped in an OCI container to capture dependencies and setup steps in a [CNAB (Cloud Native Application Bundle)](https://github.com/cnabio/cnab-spec) bundle manifest.  Using a bundle will provide a consistent build and deployment experience for OHDSI on Azure.
 
 You can perform a local build for porter with the following command:
 
